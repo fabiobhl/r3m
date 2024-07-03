@@ -1,3 +1,5 @@
 outputs/
 __pycache__/
 .nfs*
+
+*.egg-info/
