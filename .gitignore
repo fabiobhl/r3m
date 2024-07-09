@@ -3,3 +3,6 @@ __pycache__/
 .nfs*
 
 *.egg-info/
+
+r3moutput/*
+.vscode
