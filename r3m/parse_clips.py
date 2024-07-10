@@ -71,6 +71,6 @@ if __name__ == '__main__':
 
     # count cpu cores and ask user to confirm
     print(f"Number of CPU cores: {os.cpu_count()}")
-    input("Press any key to continue...")
+    #input("Press any key to continue...")
 
     main(args.input_dir, args.output_dir, args.rel_clips_file, args.max_workers)
