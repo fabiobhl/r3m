@@ -4,27 +4,14 @@ import os
 from pathlib import Path
 import argparse
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import math
 import json
 from r3m.utils.clip_processing import extract_frames_to_compressed_hdf5
 
-def process_video_list(video_paths: list[str], hdf5_file_paths: list[str], tqdm_enabled=False):
-    if tqdm_enabled:
-        pbar = tqdm(total=len(video_paths), desc="Extracting and compressing videos")
-    else:
-        pbar = None
-    
-    for video_path, hdf5_file_path in zip(video_paths, hdf5_file_paths):
-        extract_frames_to_compressed_hdf5(video_path, hdf5_file_path)
-        if pbar is not None:
-            pbar.update(1)
-    
-    if pbar is not None:
-        pbar.close()
 
-def main(input_dir: str, output_dir: str, relevant_clips_file: str):
+def main(input_dir: str, output_dir: str, relevant_clips_file: str, max_workers: int):
 
     # convert input_dir and output_dir to Path objects
     input_dir = Path(input_dir)
@@ -58,23 +45,32 @@ def main(input_dir: str, output_dir: str, relevant_clips_file: str):
         
     
     # Process the videos in parallel    
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
         
-        chunk_size = math.ceil(len(video_paths) / os.cpu_count())
-
-        for i in range(os.cpu_count()):
-            start_idx = i * chunk_size
-            end_idx = min((i + 1) * chunk_size, len(video_paths))
-            if i == 0:
-                tqdm_enabled = True
-            else:
-                tqdm_enabled = False
-            futures.append(executor.submit(process_video_list, video_paths[start_idx:end_idx], hdf5_file_paths[start_idx:end_idx], tqdm_enabled))
-
-        # Wait for all futures to complete
-        for future in futures:
-            future.result()
+        with tqdm(total=len(video_paths)) as pbar:
+            
+            # Submit the first set of tasks
+            for _ in range(max_workers):
+                if not video_paths:
+                    break
+                video_path = video_paths.pop(0)
+                hdf5_file_path = hdf5_file_paths.pop(0)
+                futures.append(executor.submit(extract_frames_to_compressed_hdf5, video_path, hdf5_file_path))
+            
+            # As futures complete, submit new tasks if any
+            for future in as_completed(futures):
+                # Wait for the current future to complete
+                future.result()  
+                # Update progress bar
+                pbar.update(1)  
+                # Check if there are remaining tasks to submit
+                if video_paths:
+                    video_path = video_paths.pop(0)
+                    hdf5_file_path = hdf5_file_paths.pop(0)
+                    futures.append(executor.submit(extract_frames_to_compressed_hdf5, video_path, hdf5_file_path))
+                
+    print("Finished processing videos.")
 
 
 if __name__ == '__main__':
@@ -82,6 +78,7 @@ if __name__ == '__main__':
     parser.add_argument('--input_dir', type=str, help='Path to the input directory containing video files.')
     parser.add_argument('--rel_clips_file', type=str, help='Path to the file containing the clips manifest.')
     parser.add_argument('--output_dir', type=str, help='Path to the output directory to save the processed dataset.')
+    parser.add_argument('--max_workers', type=int, help='Number of workers to use for processing videos. Default is the number of CPU cores.')
 
     args = parser.parse_args()
 
@@ -89,4 +86,4 @@ if __name__ == '__main__':
     print(f"Number of CPU cores: {os.cpu_count()}")
     input("Press any key to continue...")
 
-    main(args.input_dir, args.output_dir, args.rel_clips_file)
+    main(args.input_dir, args.output_dir, args.rel_clips_file, args.max_workers)
