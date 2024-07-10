@@ -8,97 +8,73 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 import math
 import json
+from r3m.utils.clip_processing import extract_frames_to_compressed_hdf5
 
-def process_video_chunk(video_path: Path, output_dir: Path, start_frame: int, end_frame: int, frame_size: tuple[int, int] = (224, 224)):
-    """
-    Extracts frames from video and saves them as images in the output directory.
-    """
+def process_video_list(video_paths: list[str], hdf5_file_paths: list[str], tqdm_enabled=False):
+    if tqdm_enabled:
+        pbar = tqdm(total=len(video_paths), desc="Extracting and compressing videos")
+    else:
+        pbar = None
     
-    # Open video file
-    cap = cv2.VideoCapture(video_path.as_posix())
+    for video_path, hdf5_file_path in zip(video_paths, hdf5_file_paths):
+        extract_frames_to_compressed_hdf5(video_path, hdf5_file_path)
+        if pbar is not None:
+            pbar.update(1)
     
-    # Set the start frame
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    frame_count = start_frame
+    if pbar is not None:
+        pbar.close()
 
-    while cap.isOpened() and frame_count < end_frame:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # resize frame
-        frame = cv2.resize(frame, frame_size)
-        
-        # save frame to disk
-        frame_filename = output_dir / f"{frame_count:06d}.jpg"
-        cv2.imwrite(str(frame_filename), frame)
-
-        # update frame count
-        frame_count += 1
-
-    cap.release()
-
-def extract_frames(video_path: Path, output_dir: Path, frame_size: tuple[int, int] = (224, 224)):
-    """
-    Extracts frames from video and saves them as images in the output directory.
-    """
-
-    # Create output directory if it does not exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    # Open video file
-    cap = cv2.VideoCapture(video_path.as_posix())
-
-    # Get total number of frames
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    # Set the number of frames per chunk
-    chunk_size = math.ceil(total_frames / os.cpu_count())
-
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = []
-
-        for i in range(os.cpu_count()):
-            start_frame = i * chunk_size
-            end_frame = min((i + 1) * chunk_size, total_frames)
-            futures.append(executor.submit(process_video_chunk, video_path, output_dir, start_frame, end_frame, frame_size))
-
-        # Wait for all futures to complete
-        for future in futures:
-            future.result()
-
-    cap.release()
-
-def main(input_dir: str, output_dir: str, rel_clips_file: str):
+def main(input_dir: str, output_dir: str, relevant_clips_file: str):
 
     # convert input_dir and output_dir to Path objects
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
-    rel_clips_file = Path(rel_clips_file)
+    relevant_clips_file = Path(relevant_clips_file)
 
     # make sure the output directory exists
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    # load the relevant clips file
+    with open(relevant_clips_file, 'r') as f:
+        relevant_clips = json.load(f)
 
-    # load the clips manifest (json file)
-    with open(rel_clips_file, 'r') as f:
-        clips_manifest = json.load(f)
-
-    # make sure that all clips in the manifest are present in the input directory
-    for video_filename in clips_manifest:
+    # make sure that all clips are present in the input directory
+    for video_filename in relevant_clips:
         video_filename = video_filename + '.mp4'
         video_path = input_dir / video_filename
         if not video_path.exists():
             raise Exception(f"Video file {video_path} does not exist.")
 
     # Extract frames and organize them into folders
-    for video_filename in tqdm(clips_manifest):
+    video_paths = []
+    hdf5_file_paths = []
+    for video_filename in relevant_clips:
         video_filename = video_filename + '.mp4'
         video_path = input_dir / video_filename
-        output_dir_video = output_dir / video_filename.split('.')[0]
-        extract_frames(video_path, output_dir_video)
+        hdf5_file_path = output_dir / f"{video_filename.split('.')[0]}.hdf5"
+        video_paths.append(video_path)
+        hdf5_file_paths.append(hdf5_file_path)
+        
+    
+    # Process the videos in parallel    
+    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures = []
+        
+        chunk_size = math.ceil(len(video_paths) / os.cpu_count())
+
+        for i in range(os.cpu_count()):
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, len(video_paths))
+            if i == 0:
+                tqdm_enabled = True
+            else:
+                tqdm_enabled = False
+            futures.append(executor.submit(process_video_list, video_paths[start_idx:end_idx], hdf5_file_paths[start_idx:end_idx], tqdm_enabled))
+
+        # Wait for all futures to complete
+        for future in futures:
+            future.result()
 
 
 if __name__ == '__main__':
@@ -111,6 +87,6 @@ if __name__ == '__main__':
 
     # count cpu cores and ask user to confirm
     print(f"Number of CPU cores: {os.cpu_count()}")
-    print("Press any key to continue...")
+    input("Press any key to continue...")
 
     main(args.input_dir, args.output_dir, args.rel_clips_file)
