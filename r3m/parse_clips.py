@@ -1,12 +1,8 @@
-import cv2
-from cv2.typing import MatLike
 import os
 from pathlib import Path
 import argparse
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
-import math
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 from r3m.utils.clip_processing import extract_frames_to_compressed_hdf5
 
@@ -45,30 +41,21 @@ def main(input_dir: str, output_dir: str, relevant_clips_file: str, max_workers:
         
     
     # Process the videos in parallel    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = []
         
-        with tqdm(total=len(video_paths)) as pbar:
-            
-            # Submit the first set of tasks
-            for _ in range(max_workers):
-                if not video_paths:
-                    break
-                video_path = video_paths.pop(0)
-                hdf5_file_path = hdf5_file_paths.pop(0)
-                futures.append(executor.submit(extract_frames_to_compressed_hdf5, video_path, hdf5_file_path))
-            
+        # Submit the first set of tasks
+        for video_path, hdf5_file_path in zip(video_paths, hdf5_file_paths):
+            futures.append(executor.submit(extract_frames_to_compressed_hdf5, video_path, hdf5_file_path))
+        
+        # Wait for all futures to complete
+        with tqdm(total=len(video_paths)) as pbar:            
             # As futures complete, submit new tasks if any
             for future in as_completed(futures):
                 # Wait for the current future to complete
                 future.result()  
                 # Update progress bar
-                pbar.update(1)  
-                # Check if there are remaining tasks to submit
-                if video_paths:
-                    video_path = video_paths.pop(0)
-                    hdf5_file_path = hdf5_file_paths.pop(0)
-                    futures.append(executor.submit(extract_frames_to_compressed_hdf5, video_path, hdf5_file_path))
+                pbar.update(1)
                 
     print("Finished processing videos.")
 
