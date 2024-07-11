@@ -25,11 +25,13 @@ import pickle
 from torchvision.utils import save_image
 import json
 import random
+from r3m.utils.clip_processing import load_frame_from_compressed_hdf5
 
 
 def get_ind(vid, index, ds):
     if ds == "ego4d":
-        return torchvision.io.read_image(f"{vid}/{index:06}.jpg")
+        #return torchvision.io.read_image(f"{vid}/{index:06}.jpg")
+        return torch.tensor(load_frame_from_compressed_hdf5(vid, index)).permute(2, 0, 1)
     else:
         raise NameError('Invalid Dataset')
 
@@ -42,6 +44,7 @@ class R3MBuffer(IterableDataset):
         self.curr_same = 0
         self.data_sources = datasources
         self.doaug = doaug
+        self.ego4dpath = ego4dpath
 
         # Augmentations
         if doaug in ["rc", "rctraj"]:
@@ -67,10 +70,10 @@ class R3MBuffer(IterableDataset):
 
         vidid = np.random.randint(0, self.ego4dlen)
         m = self.manifest.iloc[vidid]
-        vidlen = m["len"]
-        txt = m["txt"]
+        vidlen = m["clip_end_frame"] - m["clip_start_frame"]
+        txt = m["narration_text"]
         label = txt[2:] ## Cuts of the "C " part of the text
-        vid = m["path"]
+        vid = f"{self.ego4dpath}{m['clip_uid']}.hdf5"
 
         start_ind = np.random.randint(1, 2 + int(self.alpha * vidlen))
         end_ind = np.random.randint(int((1-self.alpha) * vidlen)-1, vidlen)
