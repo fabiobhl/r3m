@@ -133,7 +133,7 @@ class Logger(object):
             self._sw = SummaryWriter(str(log_dir / 'tb'))
         else:
             print(cfg.wandbuser)
-            wandb.init(project=cfg.wandbproject, name=cfg.experiment)
+            wandb.init(project=cfg.wandbproject)
             fullcfg = {**cfg, **cfg.agent}
             wandb.config.update(fullcfg)
 
